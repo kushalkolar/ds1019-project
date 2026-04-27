@@ -76,7 +76,7 @@ ac_spmv = SpMVImage(
     spmv_mode=KERNEL,
 )
 
-
+n = 5_000
 def benchmark_wgsl(obj: SpMVImage, n: int):
     obj.clear_timings()
     for i in range(n):
@@ -136,8 +136,6 @@ df = pd.DataFrame(
 # for the torch benchmarks
 dmr.to("cuda")
 dmr.pmd_array.to("cuda")
-
-n = 5_000
 
 params = [
     [benchmark_wgsl, {"denoise": pmd_spmv, "demix": ac_spmv}, [tuple()]],

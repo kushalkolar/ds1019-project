@@ -14,7 +14,7 @@ from typing import Optional, Union, Literal
 import pygfx as gfx
 
 
-# compute shader from pygfx, adapted to add uniform buffer support and return timing information for benchmarks
+# `ComputeShader` helper class adapted from pygfx to add uniform buffer support and return timing information for benchmarks
 # TODO: move this into wgpu/pygfx/new lib
 # TODO: ability to concatenate multiple steps
 class ComputeShader:
