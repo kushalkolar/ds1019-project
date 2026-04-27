@@ -28,9 +28,9 @@ pip install git+https://github.com/pygfx/pygfx.git@main
 
 ## Layout
 
-project dir
+### project dir
 
-### `_spmv.py`
+#### `_spmv.py`
 
  tell the GPU to render 
 specific data, and then have a Texture so we can view it. The classes in this module handle this.
@@ -48,7 +48,7 @@ of neurons, and a dense matrix `C` representing temporal components. IT uses `Co
 the GPU, run the CSR scalar or CSR vector compute shader (kernel), based on a `kwarg`, and it also manages a 
 fastplotlib `TextureArray` which allows us to visualize the results as new frames are reconstructed from `A` and `C`.
 
-### shaders (compute kernels)
+#### shaders (compute kernels)
 
 * `matvec.wgsl` - not used, just a basic naive mat-vec kernel that operates on dense arrays
 `matvec_coalesced.wgsl` - basic mat-vec that uses coalesced as opposed to strided memory access for more efficient reads. See: https://developer.nvidia.com/blog/unlock-gpu-performance-global-memory-access-in-cuda/
