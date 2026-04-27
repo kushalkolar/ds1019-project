@@ -1,0 +1,475 @@
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+import scipy.sparse
+import wgpu
+import pygfx
+import fastplotlib as fpl
+from fastplotlib.graphics.features import TextureArray
+
+_WORKGROUP_SIZE = 32
+
+import time
+
+from typing import Optional, Union
+import pygfx as gfx
+
+
+# compute shader from pygfx, adapted to add uniform buffer support and return timing information for benchmarks
+# TODO: move this into wgpu/pygfx/new lib
+# TODO: ability to concatenate multiple steps
+class ComputeShader:
+    """Abstraction for a compute shader.
+
+    Parameters
+    ----------
+    wgsl : str
+        The compute shader's code as WGSL.
+    entry_point : str | None
+        The name of the wgsl function that must be called.
+        If the wgsl code has only one entry-point (a function marked with ``@compute``)
+        this argument can be omitted.
+    label : str | None
+        The label for this shader. Used to set labels of underlying wgpu objects,
+        and in debugging messages. If not set, use the entry_point.
+    report_time : bool
+        When set to True, will print the spent time to run the shader.
+    """
+
+    def __init__(
+            self,
+            wgsl,
+            *,
+            entry_point: Optional[str] = None,
+            label: Optional[str] = None,
+            report_time: bool = False,
+    ):
+        # Fixed
+        self._wgsl = wgsl
+        self._entry_point = entry_point
+        self._label = label or entry_point or ""
+        self._report_time = report_time
+
+        # Things that can be changed via the API
+        self._resources = {}
+        self._constants = {}
+
+        # Flag to keep track whether this object changed.
+        # Note that this says nothing about the contents of buffers/textures used as input.
+        self._changed = True
+
+        # Internal variables
+        self._device = gfx.renderers.wgpu.Shared.get_instance().device
+        self._shader_module = None
+        self._pipeline = None
+        self._bind_group = None
+
+    @property
+    def changed(self) -> bool:
+        """Whether the shader has been changed.
+
+        This can be a new value for a constant, or a different resource.
+        Note that this says nothing about the values inside a buffer or texture resource.
+        This value is reset when ``dispatch()`` is called.
+        """
+        return self._changed
+
+    def set_resource(
+            self,
+            index: int,
+            resource: Union[gfx.Buffer, gfx.Texture, wgpu.GPUBuffer, wgpu.GPUTexture],
+            *,
+            clear=False,
+    ):
+        """Set a resource.
+
+        Parameters
+        ----------
+        index : int
+            The binding index to connect this resource to. (The group is hardcoded to zero for now.)
+        resource : buffer | texture
+            The buffer or texture to attach. Can be a wgpu or pygfx resource.
+        clear : bool
+            When set to True (only possible for a buffer), the resource is cleared to zeros
+            right before running the shader.
+        """
+        # Check
+        if not isinstance(index, int):
+            raise TypeError(f"ComputeShader resource index must be int, not {index!r}.")
+        if not isinstance(
+                resource, (gfx.Buffer, gfx.Texture, wgpu.GPUBuffer, wgpu.GPUTexture)
+        ):
+            raise TypeError(
+                f"ComputeShader resource value must be gfx.Buffer, gfx.Texture, wgpu.GPUBuffer, or wgpu.GPUTexture, not {resource!r}"
+            )
+        clear = bool(clear)
+        if clear and not isinstance(
+                resource, (gfx.Buffer, gfx.Texture, wgpu.GPUBuffer)
+        ):
+            raise ValueError("Can only clear a buffer, not a texture.")
+
+        old_value = self._resources.get(index)
+        if old_value is not None and old_value[2] == "uniform":
+            raise ValueError(
+                f"Binding index {index} is already used as a uniform; choose a different index."
+            )
+
+        # Value to store
+        new_value = (resource, bool(clear), "resource")
+
+        # Update if different
+        if new_value != old_value:
+            if resource is None:
+                self._resources.pop(index, None)
+            else:
+                self._resources[index] = new_value
+            self._bind_group = None
+            self._changed = True
+
+    def set_uniform(self, index: int, data):
+        """
+        Set a uniform buffer
+        """
+
+        # for now just hard-code single 2 byte uniforms
+        size = 16
+
+        old_value = self._resources.get(index)
+        if old_value is not None and old_value[2] != "uniform":
+            raise ValueError
+
+        # create GPU buffer and write value, similar to set_resource()
+        if old_value is None or old_value[0].size != size:
+            buffer = self._device.create_buffer(
+                size=size,
+                usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST,
+            )
+            self._resources[index] = (buffer, False, "uniform")
+            self._bind_group = None
+            self._changed = True
+        else:
+            buffer = old_value[0]
+
+        self._device.queue.write_buffer(buffer, 0, data)
+
+    def set_constant(self, name: str, value: Union[bool, int, float, None]):
+        """Set override constant.
+
+        Setting override constants don't require shader recompilation, but does
+        require re-creating the pipeline object. So it's less suited for things
+        that change on every draw.
+        """
+        # NOTE: we could also provide support for uniform variables.
+        # The override constants are nice and simple, but require the pipeline
+        # to be re-created whenever a contant changes.
+
+        # Check
+        if not isinstance(name, str):
+            raise TypeError(f"ComputeShader constant name must be str, not {name!r}.")
+        if not (value is None or isinstance(value, (bool, int, float))):
+            raise TypeError(
+                f"ComputeShader constant value must be bool, int, float, or None, not {value!r}."
+            )
+
+        # Update if different
+        old_value = self._constants.get(name)
+        if value != old_value:
+            if value is None:
+                self._constants.pop(name, None)
+            else:
+                self._constants[name] = value
+            self._pipeline = None
+            self._changed = True
+
+    def _get_native_resource(self, resource):
+        if isinstance(resource, gfx.Resource):
+            return gfx.renderers.wgpu.engine.update.ensure_wgpu_object(resource)
+        return resource
+
+    def _get_bindings_from_resources(self):
+        bindings = []
+        for index, (resource, _, _) in self._resources.items():
+            # Get wgpu.GPUBuffer or wgpu.GPUTexture
+            wgpu_object = self._get_native_resource(resource)
+            if isinstance(wgpu_object, wgpu.GPUBuffer):
+                bindings.append(
+                    {
+                        "binding": index,
+                        "resource": {
+                            "buffer": wgpu_object,
+                            "offset": 0,
+                            "size": wgpu_object.size,
+                        },
+                    }
+                )
+            elif isinstance(wgpu_object, wgpu.GPUTexture):
+                bindings.append(
+                    {
+                        "binding": index,
+                        "resource": wgpu_object.create_view(
+                            usage=wgpu.TextureUsage.STORAGE_BINDING
+                        ),
+                    }
+                )
+            else:
+                raise RuntimeError(f"Unexpected resource: {resource}")
+        return bindings
+
+    def dispatch(self, nx, ny=1, nz=1) -> None | float:
+        """
+        Dispatch the workgroups, i.e. run the shader.
+
+
+        """
+        nx, ny, nz = int(nx), int(ny), int(nz)
+
+        # Reset
+        self._changed = False
+
+        # Get device
+        if self._device is None:
+            self._shader_module = None
+            self._device = gfx.renderers.wgpu.Shared.get_instance().device
+        device = self._device
+
+        # Compile the shader
+        if self._shader_module is None:
+            self._pipeline = None
+            self._shader_module = device.create_shader_module(
+                label=self._label, code=self._wgsl
+            )
+
+        # Get the pipeline object
+        if self._pipeline is None:
+            self._bind_group = None
+            self._pipeline = device.create_compute_pipeline(
+                label=self._label,
+                layout="auto",
+                compute={
+                    "module": self._shader_module,
+                    "entry_point": self._entry_point,
+                    "constants": self._constants,
+                },
+            )
+
+        # Get the bind group object
+        if self._bind_group is None:
+            bind_group_layout = self._pipeline.get_bind_group_layout(0)
+            bindings = self._get_bindings_from_resources()
+            self._bind_group = device.create_bind_group(
+                label=self._label, layout=bind_group_layout, entries=bindings
+            )
+
+        # Make sure that all used resources have a wgpu-representation, and are synced
+        for resource, _, _ in self._resources.values():
+            if isinstance(resource, gfx.Resource):
+                gfx.renderers.wgpu.engine.update.update_resource(resource)
+
+        t0 = time.perf_counter()
+
+        # Start!
+        command_encoder = device.create_command_encoder(label=self._label)
+
+        # Maybe clear some buffers
+        for resource, clear, _ in self._resources.values():
+            if clear:
+                command_encoder.clear_buffer(self._get_native_resource(resource))
+
+        # Do the compute pass
+        compute_pass = command_encoder.begin_compute_pass()
+        compute_pass.set_pipeline(self._pipeline)
+        compute_pass.set_bind_group(0, self._bind_group)
+        compute_pass.dispatch_workgroups(nx, ny, nz)
+        compute_pass.end()
+
+        # Submit!
+        device.queue.submit([command_encoder.finish()])
+
+        # Timeit
+        if self._report_time:
+            device._poll_wait()  # wait for the GPU to finish
+            t1 = time.perf_counter()
+            return (t1 - t0) * 1000.0
+
+
+def create_storage_buffer(device, array: np.ndarray) -> wgpu.GPUBuffer:
+    """helper function to create our storage buffers on the GPU"""
+    buf = device.create_buffer(
+        size=array.nbytes,
+        usage=wgpu.BufferUsage.STORAGE | wgpu.BufferUsage.COPY_DST,
+    )
+    device.queue.write_buffer(buf, 0, array)
+    return buf
+
+
+@dataclass
+class MatrixCSR:
+    """organize our CSR buffers"""
+    indptr: wgpu.GPUBuffer
+    indices: wgpu.GPUBuffer
+    values: wgpu.GPUBuffer
+
+
+class SparseDenseImage:
+    """
+    Sparse matrix-vector multiply with the result stored in a Texture that can
+    be visualized as a fastplotlib ImageGraphic.
+
+    Parameters
+    ----------
+    A: scipy.sparse.csr_matrix
+        Spatial components, shape is [p, k]
+
+    C: np.ndarray
+        dense array of temporal components, shape is [k, T]
+
+    shape: (int, int)
+        2D shape of the image that A @ C[:, t] represents, i.e. FOV shape
+
+    scale_factor: np.ndarray
+        scale factor image from masknmf
+
+    scale_add: np.ndarray
+        scale addition from masknmf
+
+    """
+
+    def __init__(self, A, C, shape, scale_factor=None, scale_add=None, benchmark: bool = False):
+        # get the shapes of things
+        p, k = A.shape
+        _, T = C.shape
+        m, n = shape
+
+        # we only use scaling for the PMD results
+        if scale_factor is None:
+            scale_factor = np.ones(shape=(p,), dtype=np.float32)
+
+        if scale_add is None:
+            scale_add = np.zeros(shape=(p,), dtype=np.float32)
+
+        device = pygfx.renderers.wgpu.get_shared().device
+
+        self._p, self._T = p, T
+        self._m, self._n = m, n
+
+        # create GPU buffers
+        self._A = MatrixCSR(
+            indptr=create_storage_buffer(device, np.ascontiguousarray(A.indptr, np.uint32)),
+            indices=create_storage_buffer(device, np.ascontiguousarray(A.indices, np.uint32)),
+            values=create_storage_buffer(device, np.ascontiguousarray(A.data, np.float32)),
+        )
+        self._C = create_storage_buffer(device, np.ascontiguousarray(C))
+        self._scale_factor = create_storage_buffer(device, scale_factor)
+        self._scale_add = create_storage_buffer(device, scale_add)
+
+        # fastplotlib TextureArray to write the data into so we can visualize it
+        self._texture_array = TextureArray(
+            data=np.zeros((m, n), dtype=np.float32),
+            cpu_buffer=False,  # buffer only exists on the GPU
+            usage=(
+                    wgpu.TextureUsage.STORAGE_BINDING  # used in compute kernel
+                    | wgpu.TextureUsage.TEXTURE_BINDING  # used as a texture
+                    | wgpu.TextureUsage.COPY_SRC  # allow compute kernel to write to it
+            ),
+        )
+
+        # fastplotlib uses a TextureArray which represents an array of textures, not used here but it's useful for
+        # very large images. So we just get the actual texture by indexing the (0, 0) texture in the array
+        self._texture = self._texture_array.buffer[0, 0]
+
+        self._benchmark = benchmark
+        self._timings = list()
+
+        # create compute shader module, set resources
+        self._compute_shader = ComputeShader(
+            Path(__file__).parent.joinpath("spmv_csr.wgsl").read_text(),
+            entry_point="spmv_csr",
+            report_time=self._benchmark,
+        )
+        self._compute_shader.set_constant("wg_size", _WORKGROUP_SIZE)
+        self._compute_shader.set_constant("T", T)
+        self._compute_shader.set_constant("n_cols", n)
+        self._compute_shader.set_resource(0, self._A.indptr)
+        self._compute_shader.set_resource(1, self._A.indices)
+        self._compute_shader.set_resource(2, self._A.values)
+        self._compute_shader.set_resource(3, self._C)
+        self._compute_shader.set_resource(5, self._texture)
+        self._compute_shader.set_resource(6, self._scale_factor)
+        self._compute_shader.set_resource(7, self._scale_add)
+
+        self._t = np.array([0], dtype=np.uint32)
+
+        vmin, vmax = self.estimate_vmin_vmax()
+
+        self._image_graphic = fpl.ImageGraphic(self._texture_array, vmin=vmin, vmax=vmax, cmap="viridis")
+
+        self.dispatch()
+
+    @property
+    def image_graphic(self) -> fpl.ImageGraphic:
+        return self._image_graphic
+
+    def estimate_vmin_vmax(self) -> tuple[float, float]:
+        """
+        Estimate (vmin, vmax) by computing 10 frames
+        """
+        n_samples = min(10, self._T - 1)
+
+        if n_samples < 1:
+            return 0.0, 1.0
+
+        timepoints = np.unique(
+            np.linspace(1, self._T - 1, n_samples).round().astype(int)
+        )
+
+        vmin = np.inf
+        vmax = -np.inf
+
+        for t in timepoints:
+            self.t = t
+            frame = self.to_numpy()
+            vmin = min(vmin, float(frame.min()))
+            vmax = max(vmax, float(frame.max())) / 2
+
+        return vmin, vmax
+
+    def to_numpy(self) -> np.ndarray:
+        """
+        Download the current image from the GPU and get as a numpy array
+        """
+        device = pygfx.renderers.wgpu.get_shared().device
+        wgpu_texture = pygfx.renderers.wgpu.engine.update.ensure_wgpu_object(self._texture)
+
+        buf = device.queue.read_texture(
+            source={"texture": wgpu_texture, "origin": (0, 0, 0), "mip_level": 0},
+            data_layout={"offset": 0, "bytes_per_row": self._n * 4},
+            size=(self._n, self._m, 1),
+        )
+
+        return np.frombuffer(buf, dtype=np.float32).reshape(self._m, self._n)
+
+    @property
+    def t(self) -> int:
+        """get or set the current t index vlaue"""
+        return self._t[0]
+
+    @t.setter
+    def t(self, value: int):
+        self._t[0] = int(value)
+
+        self._compute_shader.set_uniform(4, self._t)
+        self._timings.append(self.dispatch())
+
+    def dispatch(self):
+        """run the compute shader"""
+        return self._compute_shader.dispatch((self._p + _WORKGROUP_SIZE - 1) // _WORKGROUP_SIZE)
+
+    def get_timings(self):
+        if not self._benchmark:
+            raise ValueError("Must create with benchmark=True to get stats")
+
+        return np.asarray(self._timings)
+
+    def clear_timings(self):
+        self._timings = list()
