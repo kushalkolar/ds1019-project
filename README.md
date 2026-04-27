@@ -26,6 +26,18 @@ pip install -e ".[imgui]"
 pip install git+https://github.com/pygfx/pygfx.git@main
 ```
 
+## Benchmarks
+
+First, the comparison the torch implemention in [masknmf](https://github.com/apasarkar/masknmf-toolbox), the wgsl compute shader is at-par or better than torch's sparse mat-vec. Torch's sparse operations in general are not the best part of the library so maybe not too surprising?
+
+The "denoise" is a denser sparse matrix, and "demix" is much less dense.
+
+<img width="958" height="536" alt="image" src="https://github.com/user-attachments/assets/edcd3f7e-041a-4734-bc1e-4b597f7a2776" />
+
+If we just compare the wgsl kernels across devices, we can see that they perform quite well on non-fancy hardware. AMD GPUs seem to be more picky about the scalar vs. vector CSR kernels, but it's impressive that even an integrated GPU performs really well when the kernel is chosen correctly based on the matrix density!
+
+<img width="1552" height="481" alt="image" src="https://github.com/user-attachments/assets/5a83155e-83af-46ba-b372-63ca0ed0d85d" />
+
 ## Layout
 
 ### project dir
