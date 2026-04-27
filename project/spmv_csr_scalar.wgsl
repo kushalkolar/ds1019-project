@@ -14,19 +14,26 @@
 // wgsl does not support structs with multiple runtime length arrays
 // so we must use 3 separate storage buffers to represent A
 // https://www.w3.org/TR/WGSL/#struct-types
-@group(0) @binding(0) var<storage, read> indptr:  array<u32>;  // row start indices
-@group(0) @binding(1) var<storage, read> indices: array<u32>;  // col indices
-@group(0) @binding(2) var<storage, read> values:  array<f32>;  // matrix values
+@group(0) @binding(0)
+var<storage, read> indptr: array<u32>;  // row start indices
+@group(0) @binding(1)
+var<storage, read> indices: array<u32>;  // col indices
+@group(0) @binding(2)
+var<storage, read> values: array<f32>;  // matrix values
 
 // C, [k, T]
-@group(0) @binding(3) var<storage, read> C:       array<f32>;
+@group(0) @binding(3)
+var<storage, read> C: array<f32>;
 
 // t, the index of T to render, i.e. the desired column of C
-@group(0) @binding(4) var<uniform> t: u32;
+@group(0) @binding(4)
+var<uniform> t: u32;
 
 // used to scale the final values
-@group(0) @binding(6) var<storage, read> scale_factor: array<f32>;
-@group(0) @binding(7) var<storage, read> scale_add:    array<f32>;
+@group(0) @binding(6)
+var<storage, read> scale_factor: array<f32>;
+@group(0) @binding(7)
+var<storage, read> scale_add: array<f32>;
 
 // final result is written into a texture so we can visualize it!
 @group(0) @binding(5) var out_tex: texture_storage_2d<r32float, write>;

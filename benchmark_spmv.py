@@ -54,7 +54,7 @@ scale_add = dmr.pmd_array.mean_img.ravel().cpu().numpy()
 # forced garbage collection in fastplotlib and pygfx can't be done due to render caching
 # so I just ran the file multiple times with different workgroup sizes
 WORKGROUP_SIZE = 32
-
+KERNEL = "vector"
 
 pmd_spmv = SpMVImage(
     U_csr,
@@ -64,6 +64,7 @@ pmd_spmv = SpMVImage(
     shape=(m, n),
     benchmark=True,
     workgroup_size=WORKGROUP_SIZE,
+    spmv_mode=KERNEL,
 )
 
 ac_spmv = SpMVImage(
@@ -72,6 +73,7 @@ ac_spmv = SpMVImage(
     shape=(m, n),
     benchmark=True,
     workgroup_size=WORKGROUP_SIZE,
+    spmv_mode=KERNEL,
 )
 
 
@@ -126,7 +128,8 @@ df = pd.DataFrame(
         "max",
         "torch-download",
         "wgsl-workgroup-size",
-        "session"
+        "dataset",
+        "kernel",
     ]
 )
 
@@ -134,7 +137,7 @@ df = pd.DataFrame(
 dmr.to("cuda")
 dmr.pmd_array.to("cuda")
 
-n = 10_000
+n = 5_000
 
 params = [
     [benchmark_wgsl, {"denoise": pmd_spmv, "demix": ac_spmv}, [tuple()]],
@@ -168,13 +171,14 @@ for benchmark_func, objs, torch_cpu_download in params:
             "wgsl-workgroup-size": (
                 WORKGROUP_SIZE if benchmark_func is benchmark_wgsl else None
             ),
-            "session": session,
+            "dataset": session,
+            "kernel": KERNEL if benchmark_func is benchmark_wgsl else None,
             **result,
         }
 
 
-if not Path(__file__).parent.joinpath("benchmarks.csv").is_file():
+if not Path(__file__).parent.joinpath("benchmark_spmv.csv").is_file():
     # create new dataframe
-    df.to_csv("benchmarks.csv", index=False)
+    df.to_csv("benchmark_spmv.csv", index=False)
 else:
-    df.to_csv("benchmarks.csv", index=False, header=False, mode="a")
+    df.to_csv("benchmark_spmv.csv", index=False, header=False, mode="a")

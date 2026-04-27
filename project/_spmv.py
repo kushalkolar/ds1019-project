@@ -10,7 +10,7 @@ from fastplotlib.graphics.features import TextureArray
 
 import time
 
-from typing import Optional, Union
+from typing import Optional, Union, Literal
 import pygfx as gfx
 
 
@@ -343,12 +343,18 @@ class SpMVImage:
         scale_add: np.ndarray = None,
         workgroup_size: int = 32,
         benchmark: bool = False,
+        spmv_mode: Literal["scalar", "vector"] = "vector",
     ):
         # get the shapes of things
         p, k = A.shape
         _, T = C.shape
         m, n = shape
         self._workgroup_size = workgroup_size
+
+        if spmv_mode == "vector" and workgroup_size != 32:
+            raise ValueError
+
+        self._spmv_mode = spmv_mode
 
         # we only use scaling for the PMD results
         if scale_factor is None:
@@ -398,7 +404,7 @@ class SpMVImage:
 
         # create compute shader module, set resources
         self._compute_shader = ComputeShader(
-            Path(__file__).parent.joinpath("spmv_csr.wgsl").read_text(),
+            Path(__file__).parent.joinpath(f"spmv_csr_{self._spmv_mode}.wgsl").read_text(),
             entry_point="spmv_csr",
             report_time=self._benchmark,
         )
@@ -482,8 +488,17 @@ class SpMVImage:
 
     def dispatch(self):
         """run the compute shader"""
+
+        if self._spmv_mode == "vector":
+            n_wg = self._p
+            nx = min(65535, n_wg)
+            ny = (n_wg + nx - 1) // nx
+        else:
+            nx = (self._p + self._workgroup_size - 1) // self._workgroup_size
+            ny = 1
+
         return self._compute_shader.dispatch(
-            (self._p + self._workgroup_size - 1) // self._workgroup_size
+            nx, ny, 1
         )
 
     def get_timings(self):

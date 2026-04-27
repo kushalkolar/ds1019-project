@@ -54,6 +54,7 @@ pmd_spmv = SpMVImage(
     scale_add=scale_add,
     shape=(m, n),
     benchmark=True,
+    spmv_mode="vector",
 )
 
 ac_spmv = SpMVImage(
@@ -61,6 +62,7 @@ ac_spmv = SpMVImage(
     C,
     shape=(m, n),
     benchmark=True,
+    spmv_mode="vector",
 )
 
 dmr.to("cuda")
