@@ -48,14 +48,14 @@ fn spmv_csr(@builtin(global_invocation_id) gid: vec3u) {
     let row_end   = indptr[row + 1];
 
     var sum: f32 = 0.0;
-    for (var j: u32 = row_start; j < row_end; j = j + 1) {
+    for (var j: u32 = row_start; j < row_end; j++) {
         let col = indices[j];
         let C_row_index = col * T;
-        sum = sum + values[j] * C[C_row_index + t];
+        // we can directly use some SIMD instrutions like FMA
+        sum = fma(values[j], C[C_row_index + t], sum);
     }
 
     // apply `scale_factor` and `scale_add`
-    // we can directly use some SIMD instrutions like FMA
     let val = fma(scale_factor[row], sum, scale_add[row]);
 
     // write final value to texture which can be visualized using a fastplotlib ImageGraphic

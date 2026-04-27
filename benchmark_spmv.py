@@ -50,10 +50,10 @@ T = int(V.shape[1])
 scale_factor = dmr.pmd_array.var_img.ravel().cpu().numpy()
 scale_add = dmr.pmd_array.mean_img.ravel().cpu().numpy()
 
+# I just run the file multiple times to benchmark different workgroup sizes for the wgsl kernel
+# forced garbage collection in fastplotlib and pygfx can't be done due to render caching
+# so I just ran the file multiple times with different workgroup sizes
 WORKGROUP_SIZE = 32
-# WORKGROUP_SIZE = 64
-# WORKGROUP_SIZE = 128
-# WORKGROUP_SIZE = 256
 
 
 pmd_spmv = SpMVImage(
@@ -141,8 +141,6 @@ params = [
 ]
 
 if WORKGROUP_SIZE == 32:
-    # I just run the file multiple times to benchmark different workgroup sizes for the wgsl kernel
-    # garbage collection with WGPU is not trivial (due to render caching) so I didn't want to deal with that here
     params.append(
         [
             benchmark_torch,

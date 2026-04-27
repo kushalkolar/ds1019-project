@@ -1,7 +1,7 @@
 from scipy import sparse
 import fastplotlib as fpl
 
-from project import SparseDenseImage
+from project import SpMVImage
 
 from pathlib import Path
 import masknmf
@@ -44,7 +44,7 @@ T = int(V.shape[1])
 scale_factor = dmr.pmd_array.var_img.ravel().cpu().numpy()
 scale_add = dmr.pmd_array.mean_img.ravel().cpu().numpy()
 
-pmd = SparseDenseImage(
+pmd = SpMVImage(
     U_csr,
     V,
     scale_factor=scale_factor,
@@ -52,7 +52,7 @@ pmd = SparseDenseImage(
     shape=(m, n),
 )
 
-ac = SparseDenseImage(
+ac = SpMVImage(
     A_csr,
     C,
     shape=(m, n),
