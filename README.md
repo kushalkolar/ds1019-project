@@ -1,4 +1,4 @@
-# ds1019-project
+# Sparse mat-vec on WGPU
 
 ## Installation
 
