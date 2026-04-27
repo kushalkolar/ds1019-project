@@ -310,7 +310,7 @@ class MatrixCSR:
     values: wgpu.GPUBuffer
 
 
-class SparseDenseImage:
+class SpMVImage:
     """
     Sparse matrix-vector multiply with the result stored in a Texture that can
     be visualized as a fastplotlib ImageGraphic.

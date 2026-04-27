@@ -1,3 +1,3 @@
-from ._spmv import SparseDenseImage
+from ._spmv import SpMVImage
 
-__all__ = ["SparseDenseImage"]
+__all__ = ["SpMVImage"]
