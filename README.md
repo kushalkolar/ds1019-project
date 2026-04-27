@@ -35,15 +35,15 @@ project dir
  tell the GPU to render 
 specific data, and then have a Texture so we can view it. The classes in this module handle this.
 
-`ComputeShader` - helper class adopted from pygfx, modified to be compatible with basic uniform buffers. 
+* `ComputeShader`: helper class adopted from pygfx, modified to be compatible with basic uniform buffers. 
 This class manages bindings (i.e. describe data that gets binded to the GPU), and the pipeline. We can 
 update the uniform buffer and re-run the compute pipeline to compute and render a specific frame of data.
 
-`create_storage_buffer` - helper class to create storage buffers for our data on the GPU
+* `create_storage_buffer`: helper class to create storage buffers for our data on the GPU
 
-`MatrixCSR` - dataclass to organize the buffers that represent a CSR matrix
+* `MatrixCSR`: dataclass to organize the buffers that represent a CSR matrix
 
-`SpMVImage` - the main class that I wrote. This takes a sparse CSR matrix `A` representing spatial components
+* `SpMVImage`: the main class that I wrote. This takes a sparse CSR matrix `A` representing spatial components
 of neurons, and a dense matrix `C` representing temporal components. IT uses `ComputeShader` to send the data to 
 the GPU, run the CSR scalar or CSR vector compute shader (kernel), based on a `kwarg`, and it also manages a 
 fastplotlib `TextureArray` which allows us to visualize the results as new frames are reconstructed from `A` and `C`.
@@ -57,10 +57,10 @@ fastplotlib `TextureArray` which allows us to visualize the results as new frame
 
 ### Example files
 
-`sanity_check_gen_data.py` - sanity check the `spmv_csr_scalar.wgsl` and `spmv_csr_vector.wgsl` kernels against scipy sparse 
+* `sanity_check_gen_data.py`: sanity check the `spmv_csr_scalar.wgsl` and `spmv_csr_vector.wgsl` kernels against scipy sparse 
 results by generating random data. This also ensure the entire pipeline from the `SpMVImage` and `ComputeShader` classes are also working correctly. We 
-expect the diff between the scipy.sparse result and my kernel to be 0.0 or within machine precision for float32, 2^-23 or ~1.19 x 10^-7
+expect the diff between the scipy.sparse result and my kernel to be 0.0 or within machine precision for float32, 2^-23 or ~1.19 x 10^-7.
 
-`masknmf_arrays.py` visualizes a reconstruction as fast as it can possibly be computed & rendered using `SpMVImage`.
+* `masknmf_arrays.py`: visualizes a reconstruction as fast as it can possibly be computed & rendered using `SpMVImage`.
 
 The rest of the file are various benchmarking files.
