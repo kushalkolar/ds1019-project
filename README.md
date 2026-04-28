@@ -30,7 +30,7 @@ pip install git+https://github.com/pygfx/pygfx.git@main
 
 First, comparison with the torch implemention in [masknmf](https://github.com/apasarkar/masknmf-toolbox). The wgsl compute shader is at-par or better than torch's sparse mat-vec. Torch's sparse operations in general are not the best part of the library so maybe not too surprising?
 
-The "denoise" is a denser sparse matrix, and "demix" is much less dense.
+The "denoise" is a denser sparse matrix with ~42 nnz/row, and "demix" is much less dense at 0.4 nnz/row.
 
 <img width="958" height="536" alt="image" src="https://github.com/user-attachments/assets/edcd3f7e-041a-4734-bc1e-4b597f7a2776" />
 
